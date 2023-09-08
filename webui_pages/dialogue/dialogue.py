@@ -2,12 +2,13 @@ import streamlit as st
 from webui_pages.utils import *
 from streamlit_chatbox import *
 from datetime import datetime
+from server.chat.search_engine_chat import SEARCH_ENGINES
 from typing import List, Dict
 import os
 
 chat_box = ChatBox(
     assistant_avatar=os.path.join(
-        "img",
+        "../img",
         "icon_blue_square.png"
     )
 )
@@ -33,6 +34,7 @@ def get_messages_history(history_len: int) -> List[Dict]:
 
 
 def dialogue_page(api: ApiRequest):
+    from configs import MODEL_CONFIG
     chat_box.init_session()
 
     with st.sidebar:
@@ -45,15 +47,11 @@ def dialogue_page(api: ApiRequest):
                     text = f"{text} current knowledge base: `{cur_kb}`。"
             st.toast(text)
             # sac.alert(text, description="descp", type="success", closable=True, banner=True)
-        
-        # def on_model_change():
-        #     # todo: reload model if loaded model is diff
-        #     st.toast(f"Load model {st.session_state.selected_model} successfully")
 
         dialogue_mode = st.selectbox("Select chat mode",
                                      ["LLM chat",
                                       "Knowledge base chat",
-                                       "Search engine chat",
+                                    #   "搜索引擎问答",
                                       ],
                                      on_change=on_mode_change,
                                      key="dialogue_mode",
@@ -63,30 +61,8 @@ def dialogue_page(api: ApiRequest):
         # todo: support history len
 
         def on_kb_change():
-            st.toast(f"Load knowledge base： {st.session_state.selected_kb}")
+            st.toast(f"已加载知识库： {st.session_state.selected_kb}")
 
-        # with st.expander("LLM config", True):
-        #     model_list = api.list_models(service="llm_service")
-        #     selected_model = st.selectbox(
-        #         "Please select model",
-        #         model_list,
-        #         on_change=on_model_change,
-        #         key="selected_model",
-        #     )
-        #     # todo: selected_framework, dtype
-        #     selected_model_dtype = st.selectbox(
-        #         "Please select model",
-        #         options=["FP16", "INT4"],
-        #         # on_change=on_model_dtype_change,
-        #         key="selected_model_dtype",
-        #     )
-        #     selected_framework = st.selectbox(
-        #         "Please select model",
-        #         options=["bigdl-llm", "transformers"],
-        #         # on_change=on_framework_change,
-        #         key="selected_framework",
-        #     )
-        kb_list=["1","2"]
         if dialogue_mode == "Knowledge base chat":
             with st.expander("Knowledge base config", True):
                 # todo
@@ -98,13 +74,13 @@ def dialogue_page(api: ApiRequest):
                     key="selected_kb",
                 )
                 kb_top_k = st.number_input("Matched knowledge items: ", 1, 20, 2)
-                score_threshold = st.number_input("Knowledge matching score threshold: ", 0.0, 1.0, float(SCORE_THRESHOLD), 0.01)
-                chunk_content = st.checkbox("use context chunk", False, disabled=True)
-                chunk_size = st.slider("context chunk size：", 0, 500, 250, disabled=True)
-        elif dialogue_mode == "Searah engine chat":
-            with st.expander("Serach engine config", True):
-                search_engine = st.selectbox("Select search engine", SEARCH_ENGINES.keys(), 0)
-                se_top_k = st.number_input("Match results number", 1, 20, 3)
+                # score_threshold = st.number_input("Knowledge matching score threshold: ", 0.0, 1.0, float(SCORE_THRESHOLD), 0.01)
+                # chunk_content = st.checkbox("关联上下文", False, disabled=True)
+                # chunk_size = st.slider("关联长度：", 0, 500, 250, disabled=True)
+        # elif dialogue_mode == "搜索引擎问答":
+        #     with st.expander("搜索引擎配置", True):
+        #         search_engine = st.selectbox("请选择搜索引擎", SEARCH_ENGINES.keys(), 0)
+        #         se_top_k = st.number_input("匹配搜索结果条数：", 1, 20, 3)
 
     # Display chat messages from history on app rerun
 
@@ -126,14 +102,20 @@ def dialogue_page(api: ApiRequest):
             #     text += t
             #     chat_box.update_msg(text)
             
-            # Todo: add temp, top_p, top_k, temperature, max_token_length
-            ret = api.llm_chat(st.session_state.get("selected_model"), prompt, history)
-            print(ret)
-            if ret["status"] == 200:
-                text = ret["completion"]
+            ret = api.llm_chat_v1(
+                    # model=str(config["model"]),
+                    prompt=prompt,
+                    history=history,
+                    top_p=float(MODEL_CONFIG["top_p"]),
+                    temperature=float(MODEL_CONFIG["temperature"]),
+                    max_token_length=int(MODEL_CONFIG["max_length"])
+                )
+            if ret.status_code == 200:
+                parsed_ret = ret.json()
+                text = parsed_ret["completion"]
             else:
                 text = "Error in llm server"
-            chat_box.update_msg(text, streaming=False)  
+            chat_box.update_msg(element=text, streaming=False)  # 更新最终的字符串，去除光标
         elif dialogue_mode == "knowledge base chat":
             history = get_messages_history(history_len)
             chat_box.ai_say([
@@ -141,6 +123,13 @@ def dialogue_page(api: ApiRequest):
                 Markdown("...", in_expander=True, title="Knowledge base matching results"),
             ])
             text = ""
+            # for d in api.knowledge_base_chat(prompt, selected_kb, kb_top_k, score_threshold, history):
+            #     if error_msg := check_error_msg(d): # check whether error occured
+            #         st.error(error_msg)
+            #     text += d["answer"]
+            #     chat_box.update_msg(text, 0)
+            #     chat_box.update_msg("\n\n".join(d["docs"]), 1, streaming=False)
+            # chat_box.update_msg(text, 0, streaming=False)
             ret = api.knowledge_base_chat_v1(
                 question=prompt,
                 selected_kb=selected_kb,
@@ -152,25 +141,8 @@ def dialogue_page(api: ApiRequest):
             else:
                 text = "Error in knowledge base chat server"
             chat_box.update_msg(text, 0, streaming=False)
-        # elif dialogue_mode == "搜索引擎问答":
-        #     chat_box.ai_say([
-        #         f"正在执行 `{search_engine}` 搜索...",
-        #         Markdown("...", in_expander=True, title="网络搜索结果"),
-        #     ])
-        #     text = ""
-        #     for d in api.search_engine_chat(prompt, search_engine, se_top_k):
-        #         if error_msg := check_error_msg(d): # check whether error occured
-        #             st.error(error_msg)
-        #         text += d["answer"]
-        #         chat_box.update_msg(text, 0)
-        #         chat_box.update_msg("\n\n".join(d["docs"]), 1, streaming=False)
-        #     chat_box.update_msg(text, 0, streaming=False)
 
     now = datetime.now()
-    with st.sidebar:
-        temperature = st.sidebar.slider('temperature', min_value=0.01, max_value=5.0, value=0.1, step=0.01)
-        top_p = st.sidebar.slider('top_p', min_value=0.01, max_value=1.0, value=0.9, step=0.01)
-        max_length = st.sidebar.slider('max_length', min_value=64, max_value=4096, value=512, step=8)
 
     with st.sidebar:
 
