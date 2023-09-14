@@ -1,0 +1,397 @@
+import time
+import streamlit as st
+from utils import *
+from datetime import datetime
+from typing import Literal, Dict, Tuple
+from configs import EMBEDDING_MODEL_DICT, LLM_SERVICE_URL, KB_SERVICE_URL, KB_VS_DICT, EMBEDDING_MODEL, DEFAULT_VS_TYPE, LOADER_DICT_V1
+from streamlit_chatbox import *
+
+# st.title('Cloud Knowledge Base Chat')
+api = ApiRequest(llm_url=LLM_SERVICE_URL, kb_url=KB_SERVICE_URL, no_remote_api=False)
+
+if "kb_chat_box" not in st.session_state:
+    st.session_state.kb_chat_box = ChatBox(
+        assistant_avatar=st.session_state.assistant_avatar_path
+    )
+    st.session_state.kb_chat_box.init_session()
+    st.session_state.kb_chat_box.history.clear()
+
+# if not kb_chat_box.chat_inited:
+#     st.toast(
+#         f"Welcome to [Cloud-LLM-Chatbot](https://github.com/chzhyang/) \n\n"
+#         f'Current model: `{MODEL_CONFIG["model"]}`'
+#     )
+
+current_page = st.session_state.get("current_page", "chat")
+show_chatbox = st.session_state.get("show_chatbox", True)
+
+with st.sidebar:
+    def on_kb_change():
+        st.toast(f"Load knowledge base: `{st.session_state.selected_kb}`")
+
+    kb_dict = api.list_knowledge_bases_v1(no_remote_api=False)
+    kb_names = list(kb_dict.keys())
+    selected_kb = st.selectbox(
+        "Select Knowledge Base",
+        kb_names,
+        on_change=on_kb_change,
+        key="selected_kb",
+    )
+    kb_top_k = st.number_input("Matched Knowledge Items: ", 1, 10, 2)
+    
+    # switch current page [chat, config]
+    if st.button(
+        "Knowledge Base Config",
+        use_container_width=True,
+    ):
+        if current_page == "chat":
+            current_page = "config"
+            show_chatbox = False
+        else:
+            current_page = "chat"
+            show_chatbox = True
+
+    with st.expander("Inference Config", False):
+        temperature = st.slider(
+            'temperature',
+            min_value=0.01,
+            max_value=5.0,
+            value=st.session_state.temperature,
+            step=0.1,
+            key="kb_temperature"
+        )
+        top_p = st.slider(
+            'top_p',
+            min_value=0.01,
+            max_value=1.0,
+            value=st.session_state.top_p,
+            step=0.1,
+            key="kb_top_p"
+        )
+        max_length = st.slider(
+            'max_length',
+            min_value=32,
+            max_value=2048,
+            value=st.session_state.max_length,
+            step=8,
+            key="kb_max_length"
+        )
+
+        history_len = st.number_input(
+            "Historical dialogue rounds:",
+            min_value=0, 
+            max_value=10, 
+            value=st.session_state.history_len,
+            key="kb_history_len_key"
+        )
+    
+    st.session_state.history_len = history_len
+    st.session_state.temperature = temperature
+    st.session_state.top_p = top_p
+    st.session_state.max_length = max_length
+
+    cols = st.columns(2)
+    export_btn = cols[0]
+    if cols[1].button(
+            "Clear",
+            use_container_width=True,
+            key="kb_clear"
+    ):
+        st.session_state.kb_chat_box.reset_history()
+        st.experimental_rerun()
+now = datetime.now()
+export_btn.download_button(
+        "Export",
+        "".join(st.session_state.kb_chat_box.export2md()),
+        file_name=f"{now:%Y-%m-%d %H.%M}_chat.md",
+        mime="text/markdown",
+        use_container_width=True,
+        key="kb_download"
+    )
+
+if current_page == "chat" and show_chatbox:
+    st.session_state.kb_chat_box.output_messages()
+    chat_input_placeholder = "Please enter the dialogue content, use Ctrl+Enter for line break"
+
+    if prompt := st.chat_input(chat_input_placeholder, key="kb_chat_prompt"):
+        history = get_messages_history(st.session_state.kb_chat_box, history_len)
+        st.session_state.kb_chat_box.ai_say([
+            f"Querying knowledge base `{selected_kb}` ...",
+            Markdown("...", in_expander=True, title="Knowledge base matching results"),
+        ])
+        text = ""
+        ret = api.knowledge_base_chat_v1(
+            query=prompt,
+            kb_name=selected_kb,
+            kb_top_k=kb_top_k,
+            # score_threshold=score_threshold,
+            temperature=temperature,
+            top_p=top_p,
+            max_token_length=max_length,
+            history=history,
+            stream=False
+        )
+        # print("ret:", ret)
+        if ret["status"] == 200:
+            text = ret["answer"]
+        else:
+            text = f'Error in knowledge base chat server: {ret["message"]}'
+        st.session_state.kb_chat_box.update_msg(text, 0, streaming=False)
+
+if current_page == "config":
+    try:
+        # kb_list = {x["kb_name"]: x for x in get_kb_details()}
+        kb_dict = api.list_knowledge_bases_v1()
+    except Exception as e:
+        st.error("Failed to startup knowledge base")
+        st.stop()
+    kb_names = list(kb_dict.keys())
+
+    if "selected_kb_name" in st.session_state and st.session_state["selected_kb_name"] in kb_names:
+        selected_kb_index = kb_names.index(st.session_state["selected_kb_name"])
+    else:
+        selected_kb_index = 0
+
+    def format_selected_kb(kb_name: str) -> str:
+        if kb := kb_dict.get(kb_name):
+            return f"{kb_name} ({kb['vs_type']} @ {kb['embed_model']})"
+        else:
+            return kb_name
+
+    selected_kb = st.selectbox(
+        "Please select or create a knowledge base:",
+        kb_names + ["create knowledge base"],
+        format_func=format_selected_kb,
+        index=selected_kb_index
+    )
+
+    if selected_kb == "create knowledge base":
+        with st.form("create knowledge base"):
+
+            kb_name = st.text_input(
+                "Knowledge base name",
+                placeholder="Support English only",
+                key="kb_name",
+            )
+
+            cols = st.columns(2)
+
+            vs_types = list(KB_VS_DICT.keys())
+            vs_type = cols[0].selectbox(
+                "Vector store type",
+                vs_types,
+                index=vs_types.index(DEFAULT_VS_TYPE),
+                key="vs_type",
+            )
+
+            embed_models = list(EMBEDDING_MODEL_DICT.keys())
+
+            embed_model = cols[1].selectbox(
+                "Embedding model",
+                embed_models,
+                index=embed_models.index(EMBEDDING_MODEL),
+                key="embed_model",
+            )
+
+            submit_create_kb = st.form_submit_button(
+                "Create",
+                # disabled=not bool(kb_name),
+                use_container_width=True,
+            )
+        # create knowledge base
+        if submit_create_kb:
+            if not kb_name or not kb_name.strip():
+                st.error(f"knowledge name is None!")
+            elif kb_name in kb_dict:
+                st.error(f"{kb_name} already exists!")
+            else:
+                ret = api.create_knowledge_base_v1(
+                    kb_name=kb_name,
+                    vs_type=vs_type,
+                    embed_model=embed_model,
+                )
+                st.toast(ret["msg"])
+                st.session_state["selected_kb_name"] = kb_name
+                st.experimental_rerun()
+    elif selected_kb:
+        kb_name = selected_kb
+        st.write(f"`{kb_name}` details:")
+        doc_list = KB_DICT[kb_name]["files"]
+        items = ""
+        for i, doc in enumerate(doc_list):
+            if i == 0:
+                items += f"{doc}"
+            else:
+                items += f", {doc}"
+        # add /t(tab) in f""
+
+        st.info(f'''
+            Embedding Model:   {KB_DICT[kb_name]["embed_model"]}\n
+            Vector Store:      {KB_DICT[kb_name]["vs_type"]}\n
+            File Count:        {len(doc_list)}\n
+            File List:         {items}
+        ''')
+        # upload doc to target knowledge base
+        # sentence_size = st.slider("sentence size limit to fit vector store", 1, 1000, SENTENCE_SIZE, disabled=True)
+        files = st.file_uploader(
+            "Upload files",
+            [i for ls in LOADER_DICT_V1.values() for i in ls],
+            accept_multiple_files=True,
+        )
+        cols = st.columns(3)
+
+        if cols[0].button(
+                "Add files to knowledge base",
+                help="upload before add",
+                # use_container_width=True,
+                disabled=len(files) == 0,
+        ):
+            # v1: just support only 1 file
+            for file in files:
+                ret = api.upload_kb_doc_v1(kb_name, file)
+                if ret["status"] == 200:
+                    st.toast(ret["message"], icon="✔")
+                else:
+                    st.toast(ret["message"], icon="✖")
+            time.sleep(2)
+            st.experimental_rerun()
+            # st.session_state.files = []
+
+        if cols[1].button(
+                "Delete knowledge base",
+                use_container_width=True,
+        ):
+            ret = api.delete_knowledge_base_v1(kb_name)
+            if ret["status"] == 200:
+                st.toast(ret["message"], icon="✔")
+            else:
+                st.toast(ret["message"], icon="✖")
+            time.sleep(2)
+            st.experimental_rerun()
+        # switch current page to chat
+        if cols[2].button(
+            "Exit",
+            use_container_width=True,
+        ):
+            if current_page == "config":
+                current_page = "chat"
+                show_chatbox = True
+
+        # Knowledge base details
+        # doc_list = KB_DICT[kb_name]["files"]
+        # if not len(doc_list):
+        #     st.info(f"`{kb_name}` contains no file")
+        # else:
+            # st.write(f"`{kb_name}` contains files:")
+            # st.info("Select file before operate")
+            # from st_aggrid import AgGrid, JsCode
+            # from st_aggrid.grid_options_builder import GridOptionsBuilder
+            # import pandas as pd
+            # from typing import Literal, Dict, Tuple
+            # cell_renderer = JsCode("""function(params) {if(params.value==true){return '✓'}else{return '×'}}""")
+            # def config_aggrid(
+            #         df: pd.DataFrame,
+            #         columns: Dict[Tuple[str, str], Dict] = {},
+            #         selection_mode: Literal["single", "multiple", "disabled"] = "single",
+            #         use_checkbox: bool = False,
+            # ) -> GridOptionsBuilder:
+            #     gb = GridOptionsBuilder.from_dataframe(df)
+            #     gb.configure_column("No", width=40)
+            #     for (col, header), kw in columns.items():
+            #         gb.configure_column(col, header, wrapHeaderText=True, **kw)
+            #     gb.configure_selection(
+            #         selection_mode=selection_mode,
+            #         use_checkbox=use_checkbox,
+            #         # pre_selected_rows=st.session_state.get("selected_rows", [0]),
+            #     )
+            #     return gb
+            # def file_exists(kb_name: str, selected_rows: List) -> Tuple[str, str]:
+            #     '''
+            #     check whether a doc file exists in local knowledge base folder.
+            #     return the file's name and path if it exists.
+            #     '''
+            #     if selected_rows:
+            #         file_name = selected_rows[0]["file_name"]
+            #         if kb_name in KB_DICT:
+            #             kb = KB_DICT[kb_name]
+            #             if file_name in kb["files"]:
+            #                 return file_name
+            #         return ""
+            # new_doc_list =  [[i + 1, item] for i, item in enumerate(doc_list)]
+            # doc_details = pd.DataFrame(new_doc_list, columns=[["No", "file_name"]])
+            # doc_details = doc_details[["No", "file_name"]]
+            # st.write(doc_details)
+            # gb = config_aggrid(
+            #     doc_details,
+            #     {
+            #         ("No", "ID"): {},
+            #         ("file_name", "filename"): {},
+            #     },
+            #     "multiple",
+            # )
+
+            # doc_grid = AgGrid(
+            #     doc_details,
+            #     gb.build(),
+            #     columns_auto_size_mode="FIT_CONTENTS",
+            #     theme="alpine",
+            #     custom_css={
+            #         "#gridToolBar": {"display": "none"},
+            #     },
+            #     allow_unsafe_jscode=True,
+            #     enable_enterprise_modules=False
+            # )
+
+            # selected_rows = doc_grid.get("selected_rows", [])
+
+            # cols = st.columns(4)
+            # file_name, file_path = file_exists(kb_name, selected_rows)
+            # if file_path:
+            #     with open(file_path, "rb") as fp:
+            #         cols[0].download_button(
+            #             "下载选中文档",
+            #             fp,
+            #             file_name=file_name,
+            #             use_container_width=True, )
+            # else:
+            #     cols[0].download_button(
+            #         "下载选中文档",
+            #         "",
+            #         disabled=True,
+            #         use_container_width=True, )
+
+            # st.write()
+            # # 将文件分词并加载到向量库中
+            # if cols[1].button(
+            #         "重新添加至向量库" if selected_rows and (pd.DataFrame(selected_rows)["in_db"]).any() else "添加至向量库",
+            #         disabled=not file_exists(kb_name, selected_rows)[0],
+            #         use_container_width=True,
+            # ):
+            #     for row in selected_rows:
+            #         api.update_kb_doc(kb, row["file_name"])
+            #     st.experimental_rerun()
+
+            # 将文件从向量库中删除，但不删除文件本身。
+            # if cols[2].button(
+            #         "从向量库删除",
+            #         # disabled=not (selected_rows and selected_rows[0]["in_db"]),
+            #         use_container_width=True,
+            # ):
+            #     for row in selected_rows:
+            #         api.delete_kb_doc(kb_name, row["file_name"])
+            #     st.experimental_rerun()
+
+            # if cols[3].button(
+            #         "从知识库中删除",
+            #         type="primary",
+            #         use_container_width=True,
+            # ):
+            #     for row in selected_rows:
+            #         ret = api.delete_kb_doc(kb_name, row["file_name"], True)
+            #         st.toast(ret.get("msg", " "))
+            #     st.experimental_rerun()
+
+# with st.expander("Knowledge base config", True):
+#     knowledge_base_config()
+# st.write(current_page, st.session_state.current_page)
+st.session_state.current_page = current_page

@@ -1,0 +1,40 @@
+ARG UBUNTU_VER=22.04
+FROM ubuntu:${UBUNTU_VER} as demo
+
+# See http://bugs.python.org/issue19846
+ENV LANG C.UTF-8
+ENV NO_PROXY=localhost,127.0.0.1
+# ARG BRANCH=main
+# ARG REPO=https://github.com/intel-sandbox/cloud.performance.generative.ai.workload.git
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    python3.9 \
+    python3-pip \
+    python3-dev \
+    python3-distutils \
+    autoconf \
+    build-essential \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    numactl \
+    time
+# RUN ln -s /usr/bin/python3.9 /usr/bin/python
+# RUN ln -sf $(which python3) /usr/bin/python
+
+RUN python3 -m pip --no-cache-dir install --upgrade pip
+RUN python3 -m pip install --no-cache-dir setuptools
+
+# Download the code
+# RUN git clone --single-branch --branch=${BRANCH} ${REPO} /llm-workload
+WORKDIR /app
+COPY .streamlit /root/.streamlit
+COPY configs configs
+COPY img img
+COPY pages pages
+COPY LLM_Chat.py LLM_Chat.py 
+COPY utils.py utils.py
+COPY requirements-webapp.txt requirements.txt
+RUN pip install -r requirements.txt --no-cache-dir
+
+CMD exec streamlit run LLM_Chat.py --server.port 7860 
