@@ -1,0 +1,1 @@
+from .knowledge_base_config import knowledge_base_config_page
