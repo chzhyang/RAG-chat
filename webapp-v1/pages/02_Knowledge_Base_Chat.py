@@ -8,6 +8,7 @@ from configs import (
     LLM_SERVICE_URL, 
     KB_SERVICE_URL, 
     KB_VS_DICT, 
+    VECTOR_SEARCH_TOP_K,
     EMBEDDING_MODEL, 
     DEFAULT_VS_TYPE, 
     LOADER_DICT_V1,
@@ -49,7 +50,7 @@ with st.sidebar:
         on_change=on_kb_change,
         key="selected_kb",
     )
-    kb_top_k = st.number_input("Matched Knowledge Items: ", 1, 10, 2)
+    kb_top_k = st.number_input("Matched Knowledge Items: ", 1, 10, VECTOR_SEARCH_TOP_K)
     
     # switch current page [chat, config]
     if st.button(
@@ -118,6 +119,7 @@ with st.sidebar:
                 MODEL_CONFIG["model"] = selected_model
                 MODEL_CONFIG["datatype"] = selected_datatype
                 MODEL_CONFIG["framework"] = selected_framework
+                # TODO: wait for reload model api completed in LLM inference service
                 ret = api.reload_model_v1(model=selected_model, model_dtype=selected_datatype, framework=selected_framework)
                 # if ret["status"] == "200":
                 #     config["model"] = selected_model

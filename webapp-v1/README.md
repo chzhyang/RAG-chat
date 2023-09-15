@@ -1,7 +1,21 @@
-# Web App for LLM Chat and Knowledge Base chat on Cloud
+# Web App for LLM Chat and Knowledge Base Chat on Cloud
 
-- LLM chat page(home): LLM chat with model config, inference config
-- Knowledge base chat page: Knowledge base chat with knowledge base config, model config, inference config
+A LLM chatbot web UI, powered by Streamlit, contains two pages:
+
+- LLM chat page(Home page), based on [LLM-inference-service](../llm-inference-serving/README.md)
+    - LLM chat
+    - Model config: select model, data type and inference framework
+    - Inference config: select temperature, top p, max generated tokens length, histroy length
+- Knowledge base chat page, based on [langchain-app-service](../langchain_demo/README.md)
+    - LLM chat with Knowledge base
+    - Knowledge base config
+        - List knowledge base details
+        - Select knowledge base
+        - Create knowledge base: select vector store and embedding model
+        - Upload files to knowledge base
+        - Delete knowledge base
+    - Model config
+    - Inference config
 
 ![LLM-chat-screen](img/screen-llm-chat_2023-09-14.png)
 
@@ -13,11 +27,14 @@
 
 ### Deploy locally
 
-- Startup LLM server and knowledge base(langchain) server
-- Config server url, MODEL_CONFIG, KB_DICT, KB_ROOT_PATH
-- Run webapp: `streamlit run LLM_Chat.py --server.port 7860`
+- LLM chat need to [startup LLM server](../llm-inference-serving/README.md)
+- Knowledge base chat need to [startup LLM server and knowledge base(langchain) server](../langchain_demo/README.md)
+- Config server url, MODEL_CONFIG, KB_DICT, KB_ROOT_PATH in [configs](./configs)
+- Install requirements-webapp.txt: `python3 -m pip install -r requirements-webapp.txt`
+- Startup webapp: `streamlit run LLM_Chat.py --server.port 7860`
+- Open `localhost:7860` in browser
 
-### Deploy with docker
+### Deploy on docker
 
 - Build local image or `docker pull chzhyang/cloud-llm-webapp:v1`
 
@@ -29,19 +46,26 @@
     -t chzhyang/cloud-llm-webapp:v1 .
     ```
 
-- Startup container
+- Startup container and run app
 
     ```shell
-    $ docker run -p 7860:7860 chzhyang/cloud-llm-webapp:v1
-     
+    $ docker run --rm -it -p 7860:7860 chzhyang/cloud-llm-webapp:v1 /bin/bash
+    $ streamlit run LLM_Chat.py --server.port 7860
         You can now view your Streamlit app in your browser.
     ```
+
+- Open `localhost:7860` in browser
 
 ### Deploy with docker compose
 
 - Build local image or `docker pull chzhyang/cloud-llm-webapp:v1`
 - Update `docker-compose-webapp-allinone.yaml`
 - Run docker-compose: `docker-compose -f docker-compose-webapp-allinone.yaml up`
+- Open `localhost:7860` in browser
 
-### Deploy on K8s
+## TODO
+
+- [ ] deploy on k8s
+- [ ] add stream chat
+- [ ] support upload file to cloud storage/kb service
 

@@ -358,7 +358,6 @@ class ApiRequest:
         )
         return response
         
-    # todo: use db-api/session-state save config
     def list_knowledge_bases_v1(
         self,
         no_remote_api: bool = None,
@@ -370,7 +369,9 @@ class ApiRequest:
             pass
         else:
             return KB_DICT
-        
+    
+    # v1: just create kb in KB_DICT
+    # TODO: wait for kb service support kn management 
     def create_knowledge_base_v1(
         self,
         kb_name: str,
@@ -397,6 +398,7 @@ class ApiRequest:
             }
             return response
     # just delete kb from app RAM config and file path
+    # TODO: delete file from kb
     def delete_knowledge_base_v1(
         self,
         kb_name: str,
@@ -449,7 +451,8 @@ class ApiRequest:
                 }
             return response
 
-    # v1: also means realy sent req to langchain to create a new knowledge base in milvus
+    # v1: also means realy sent req to langchain to create a new knowledge base with only the 1st file
+    # TODO: Upload file to existed kb in kb service if langchain app support multi files and support kb management
     def upload_kb_doc_v1(
         self,
         kb_name: str,
